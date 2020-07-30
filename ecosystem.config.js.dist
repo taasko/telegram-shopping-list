@@ -1,0 +1,16 @@
+module.exports = {
+  apps: [
+    {
+      name: "telegram-shopping-list",
+      script: "index.js",
+      time: true,
+      cwd: "/var/app/telegram-shopping-list/build/",
+      env: {
+        NODE_ENV: "development",
+      },
+      env_production: {
+        NODE_ENV: "production",
+      },
+    },
+  ],
+};
