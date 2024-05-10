@@ -1,13 +1,18 @@
-const nodeJsonDb = require("node-json-db");
-const db = new nodeJsonDb(process.env.DB_FILE, true, false);
+import { JsonDB, Config } from "node-json-db";
 import { Item } from "../typings/Item";
 
+if (!process.env.DB_FILE) {
+  throw new Error("DB_FILE is required.");
+}
+
+const db = new JsonDB(new Config(process.env.DB_FILE, true, false, "/"));
+
 const StorageService = {
-  getShoppingList: function (userId: number): Item[] {
-    let shoppingList = [];
+  getShoppingList: async function (userId: number): Promise<Item[]> {
+    let shoppingList: Item[] = [];
 
     try {
-      shoppingList = db.getData("/shoppingList/" + userId);
+      shoppingList = (await db.getData("/shoppingList/" + userId)) as Item[];
     } catch (e) {
       console.error(e);
     }
@@ -15,11 +20,11 @@ const StorageService = {
     return shoppingList;
   },
 
-  insertIntoShoppingList: function (userId: number, items: Item[]): Item[] {
-    let shoppingList = [];
+  insertIntoShoppingList: async function (userId: number, items: Item[]) {
+    let shoppingList: Item[] = [];
 
     try {
-      shoppingList = this.getShoppingList(userId);
+      shoppingList = await this.getShoppingList(userId);
     } catch (e) {
       console.error(e);
     }
@@ -35,8 +40,8 @@ const StorageService = {
     return shoppingList;
   },
 
-  deleteFromShoppingList(userId: number, itemNumbers: string[]): Item[] {
-    let shoppingList = this.getShoppingList(userId);
+  async deleteFromShoppingList(userId: number, itemNumbers: string[]) {
+    let shoppingList = await this.getShoppingList(userId);
 
     itemNumbers
       .map(Number)

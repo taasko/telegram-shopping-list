@@ -1,92 +1,104 @@
-const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, "../.env") });
-
-const Telegraf = require("telegraf");
-const Stage = require("telegraf/stage");
-const Scene = require("telegraf/scenes/base");
-const session = require("telegraf/session");
-
-const bot = new Telegraf(process.env.BOT_TOKEN);
-const { leave } = Stage;
-
+import "dotenv/config";
+import { Telegraf, Scenes, Markup, session } from "telegraf";
 import StorageService from "./service/storage";
 import { Item } from "./typings/Item";
 
+if (!process.env.BOT_TOKEN) {
+  throw new Error("BOT_TOKEN is required.");
+}
+
+const bot = new Telegraf<Scenes.SceneContext>(process.env.BOT_TOKEN);
+
 // Main keyboard.
-const commandKeyboard = Telegraf.Markup.keyboard([
-  Telegraf.Markup.callbackButton("📋 List"),
-  Telegraf.Markup.callbackButton("➕ Add"),
-  Telegraf.Markup.callbackButton("🗑️ Remove"),
-])
-  .resize()
-  .extra();
+const commandKeyboard = Markup.keyboard([
+  Markup.button.callback("📋 List", "list"),
+  Markup.button.callback("➕ Add", "add"),
+  Markup.button.callback("🗑️ Remove", "remove"),
+]);
 
 // Adder scene.
-const adder = new Scene("adder");
+const adder = new Scenes.BaseScene<Scenes.SceneContext>("adder");
 
-const adderKeyboard = Telegraf.Markup.keyboard([
-  Telegraf.Markup.callbackButton("⬅️ End"),
-])
-  .resize()
-  .extra();
-
-adder.enter(({ reply }) =>
-  reply("Please tell me what item you want to add?", adderKeyboard)
-);
-
-adder.leave(({ reply }) => {
-  reply("Adding ended.");
-  return reply("Choose action:", commandKeyboard);
+adder.enter((ctx) => {
+  return ctx.reply("Please tell me what item you want to add?", adderKeyboard);
 });
 
-adder.hears("⬅️ End", leave());
+adder.leave((ctx) => {
+  ctx.reply("Adding ended.");
 
-adder.on("message", ({ reply, message }) => {
-  addItemsToShoppingList(message.from.id, [message.text]);
-  return reply(`Item added. To end adding, tap "End" button.`);
+  return ctx.reply("Choose action:", commandKeyboard);
 });
 
-// Stage.
-const stage = new Stage();
+adder.hears("⬅️ End", (ctx) => {
+  ctx.scene.leave();
 
-stage.register(adder);
+  if (ctx.scene.current) {
+    ctx.scene.current.leave();
+  }
+});
+
+adder.on("message", async (ctx) => {
+  if (!("text" in ctx.message)) {
+    return ctx.reply("Please provide a valid item name.");
+  }
+
+  addItemsToShoppingList(ctx.message.from.id, [ctx.message.text]);
+
+  return ctx.reply(`Item added. To end adding, tap "End" button.`);
+});
+
+const adderKeyboard = Markup.keyboard([
+  Markup.button.callback("⬅️ End", "end"),
+]);
+
+const stage = new Scenes.Stage<Scenes.SceneContext>([adder], {
+  ttl: 10,
+});
 
 // Middleware.
-bot.use(({ from, reply }, next) => {
-  if (process.env.AUTHORIZED_USERS.indexOf(from.id) > -1) {
+bot.use((ctx, next) => {
+  if (
+    ctx.from &&
+    ctx.from.id &&
+    process.env.AUTHORIZED_USERS &&
+    process.env.AUTHORIZED_USERS.includes(ctx.from.id.toString())
+  ) {
     next();
   } else {
-    return reply("Not authorized");
+    return ctx.reply("Not authorized");
   }
 });
 
 bot.use(session());
-
 bot.use(stage.middleware());
 
 // When end user starts bot.
-bot.start(({ reply }) => reply("Choose action:", commandKeyboard));
-
-// Main listeners.
-bot.hears("📋 List", ({ reply, message }) =>
-  reply(getCurrentShoplist(message.from.id))
-);
-
-bot.hears("➕ Add", ({ scene }) => scene.enter("adder"));
-
-bot.hears("🗑️ Remove", ({ reply, message }) => {
-  const keyboard = buildRemoveList(message.from.id);
-  return reply(
-    "Choose item to remove:",
-    Telegraf.Markup.keyboard(keyboard).resize().extra()
-  );
+bot.start((ctx) => {
+  return ctx.reply("Choose action:", commandKeyboard);
 });
 
-bot.hears("⬅️ Back", ({ reply }) => reply("Choose action:", commandKeyboard));
+// Main listeners.
+bot.hears("📋 List", async (ctx) => {
+  ctx.reply(await getCurrentShoplist(ctx.message.from.id));
+});
+
+bot.hears("➕ Add", (ctx) => {
+  ctx.scene.enter("adder");
+});
+
+bot.hears("🗑️ Remove", async (ctx) => {
+  const keyboard = await buildRemoveList(ctx.message.from.id);
+
+  return ctx.reply("Choose item to remove:", Markup.keyboard(keyboard));
+});
+
+bot.hears(["⬅️ Back", "⬅️ End"], (ctx) => {
+  ctx.reply("Choose action:", commandKeyboard);
+});
 
 // Remove command.
-bot.command("r", (ctx) => {
-  let shoppingList = StorageService.getShoppingList(ctx.message.from.id);
+bot.command("r", async (ctx) => {
+  let shoppingList = await StorageService.getShoppingList(ctx.message.from.id);
 
   const itemNumbers = getParams(ctx);
 
@@ -96,35 +108,31 @@ bot.command("r", (ctx) => {
   StorageService.deleteFromShoppingList(ctx.message.from.id, itemNumbers);
 
   ctx.reply(`Item${itemNumbers.length > 1 ? "s" : ""} removed`);
-  ctx.reply(getCurrentShoplist(ctx.message.from.id));
+  ctx.reply(await getCurrentShoplist(ctx.message.from.id));
 
   if (shoppingList.length > 0) {
-    const keyboard = buildRemoveList(ctx.message.from.id);
+    const keyboard = await buildRemoveList(ctx.message.from.id);
 
-    return ctx.reply(
-      "Choose item to remove:",
-      Telegraf.Markup.keyboard(keyboard).resize().extra()
-    );
+    return ctx.reply("Choose item to remove:", Markup.keyboard(keyboard));
   }
+
   return ctx.reply("Choose action:", commandKeyboard);
 });
 
-// Start bot itself.
-bot.startPolling();
-
 // Functions.
-function getParams(ctx): string[] {
+function getParams(ctx: any): string[] {
   if (ctx.message.text.indexOf(" ") !== -1) {
     return ctx.message.text
       .substring(ctx.message.text.indexOf(" "))
       .trim()
       .split(" ");
   }
+
   return [];
 }
 
-function getCurrentShoplist(userId: number): string {
-  let shoppingList = StorageService.getShoppingList(userId);
+async function getCurrentShoplist(userId: number) {
+  let shoppingList = await StorageService.getShoppingList(userId);
 
   if (!shoppingList || shoppingList.length < 1) {
     return "Shoplist is empty.";
@@ -133,7 +141,7 @@ function getCurrentShoplist(userId: number): string {
   return getShoppingListString(shoppingList);
 }
 
-function getShoppingListString(shoppingList: Item[]): string {
+function getShoppingListString(shoppingList: Item[]) {
   let listString = "Shoplist: \n";
   let itemNumber = 1;
   for (const item of shoppingList) {
@@ -143,8 +151,8 @@ function getShoppingListString(shoppingList: Item[]): string {
   return listString;
 }
 
-function buildRemoveList(userId: number) {
-  let shoppingList = StorageService.getShoppingList(userId);
+async function buildRemoveList(userId: number) {
+  let shoppingList = await StorageService.getShoppingList(userId);
   const keyboard = [];
 
   shoppingList.forEach((item, i) => {
@@ -165,3 +173,8 @@ function addItemsToShoppingList(userId: number, itemNames: string[]): void {
 
   StorageService.insertIntoShoppingList(userId, itemsToAdd);
 }
+
+bot.launch();
+
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
