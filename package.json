@@ -2,10 +2,11 @@
   "name": "telegram-shopping-list",
   "version": "1.0.0",
   "description": "Shopping list bot for Telegram.",
+  "main": "build/index.js",
   "scripts": {
-    "start": "node build/",
+    "start": "npm run build && node .",
     "dev": "nodemon",
-    "build": "tsc src/index.ts --outDir build"
+    "build": "tsc"
   },
   "author": "Taavi S.",
   "license": "ISC",
@@ -15,6 +16,7 @@
     "telegraf": "^4.16.3"
   },
   "devDependencies": {
+    "@tsconfig/node20": "^20.1.4",
     "nodemon": "^3.1.0",
     "prettier": "^3.2.5",
     "ts-node": "^10.9.2",
